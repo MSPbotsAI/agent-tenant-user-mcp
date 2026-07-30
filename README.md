@@ -15,9 +15,11 @@ MCP server for the **MSPbots Agent Platform tenant/user API** (`mb-platform-user
 
 **1 tool**, matching the single documented endpoint (`tenants.md`, attached to [PRD-15236](https://app.clickup.com/t/2280862/PRD-15236)):
 
-- `agent_tenant_user_list_tenants` — `GET /apps/mb-platform-user/api/tenants` (paginated, returns **all platform tenants**; requires `superAdmin`/`admin` role per the source doc).
+- `mspbots_user_list_tenants` — `GET /apps/mb-platform-user/api/tenants` (paginated + filterable, returns **all platform tenants**; requires `superAdmin`/`admin` role per the source doc).
 
 No larger public API exists to reference for broader scope (this is a first-party internal service), so scope is exactly what the source doc documents.
+
+**Query parameters were corrected on 2026-07-30** — Leo Yang posted the actual current INT-branch implementation (`service/tenant.ts:87`), which documents 4 filter parameters (`search`, `isActive`, `createdFrom`, `createdTo`) beyond the `page`/`pageSize` in the original `tenants.md` attachment, and clarifies that `page`/`pageSize` are both optional (defaults 1 / 20), not required. This tool has been updated to match that corrected spec.
 
 ## Authentication
 
@@ -61,7 +63,9 @@ Missing any header returns `401`:
 
 | Tool | 功能 | 方法+路径 | 参数 |
 |---|---|---|---|
-| `agent_tenant_user_list_tenants` | 分页获取全平台租户列表（需 superAdmin/admin 角色） | GET /apps/mb-platform-user/api/tenants | page(必填), page_size(必填) |
+| `mspbots_user_list_tenants` | 分页获取全平台租户列表，支持关键字/启用状态/注册时间区间过滤（需 superAdmin/admin 角色） | GET /apps/mb-platform-user/api/tenants | page(可选,默认1), page_size(可选,默认20), search(可选), is_active(可选), created_from(可选), created_to(可选) |
+
+`search`/`is_active`/`created_from`/`created_to` combine as AND; results are always sorted by `createdAt` descending; an invalid date value in `created_from`/`created_to` is silently ignored (not an error) per the confirmed INT-branch implementation.
 
 ## 测试示例
 
@@ -84,18 +88,18 @@ curl -s -X POST http://localhost:8080/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "agent_tenant_user_list_tenants",
-      "arguments": {"page": 1, "page_size": 50}
+      "name": "mspbots_user_list_tenants",
+      "arguments": {"page": 1, "page_size": 50, "created_from": "2026-07-01"}
     }
   }'
 ```
 
 ## API Reference
 
-- Source doc: `tenants.md`, attached to [PRD-15236](https://app.clickup.com/t/2280862/PRD-15236) (per its own notes, fields were captured from one real call on 2026-07-30; `code` semantics, `timezoneOffset` unit, and timestamp formats are inferred, not officially confirmed by the backend team).
+- Source doc: `tenants.md`, attached to [PRD-15236](https://app.clickup.com/t/2280862/PRD-15236) — superseded for the query-parameter list by Leo Yang's 2026-07-30 confirmation of the actual current INT-branch implementation (`service/tenant.ts:87`), posted in the MB_AgentPlatform Teams chat.
 
 ## Known Gaps
 
-- **Live self-test not yet performed** — this build has no real JWT/tenant ID for `agent.mspbots.ai` on hand. Verified structurally only: MCP handshake, `tools/list`, and 401 credential-gating with placeholder values. Needs a real bearer token + tenant ID to confirm the actual tenant-list response shape end-to-end.
+- **Live self-test still not passing** — every attempt so far (a PROD web-panel token, then a real Agent Platform admin-role JWT) has returned `403 Permission denied`, even with header/cookie transport variations for `X_Tenant_ID` ruled out as the cause (all three transports gave the identical result). Current working theory: the JWT's `appRoles` field was an empty object (`{}`) and this endpoint may check per-app `appRoles` rather than the top-level `roles` array — unconfirmed, needs backend-side clarification.
 - The `X_Tenant_ID`-as-header-not-cookie assumption is carried over from `ticketqa-mcp`'s empirical finding on the same platform, not independently re-verified for this specific `mb-platform-user` service.
-- `code`/`timezoneOffset`/timestamp-format semantics are explicitly marked as inferred in the source doc itself.
+- `code`/`timezoneOffset`/timestamp-format semantics beyond the corrected query-parameter table are still only inferred from the original source doc, not officially confirmed by the backend team.
