@@ -1,55 +1,69 @@
-import json
 from collections.abc import Callable
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+from pydantic import Field
 
+from .._json import dump_json_capped
 from ..api_client import AgentTenantUserClient, AgentTenantUserError
 from ._common import NO_TOKEN
+
+_MAX_PAGE_SIZE = 100
 
 
 def register(mcp: FastMCP, client_factory: Callable[[], AgentTenantUserClient | None]) -> None:
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
     async def mspbots_user_list_tenants(
-        page: int | None = None,
-        page_size: int | None = None,
-        search: str | None = None,
-        is_active: str | None = None,
-        created_from: str | None = None,
-        created_to: str | None = None,
+        page: Annotated[
+            int | None, Field(description="Page number, starting from 1. Default 1.")
+        ] = None,
+        page_size: Annotated[
+            int | None,
+            Field(description="Results per page, 1-100 (default 20; values above 100 are clamped)."),
+        ] = None,
+        search: Annotated[
+            str | None,
+            Field(
+                description="Case-insensitive substring match against name, slug, or microsoftTenantName."
+            ),
+        ] = None,
+        is_active: Annotated[
+            str | None,
+            Field(description='Active-status filter: "true" or "false". Other values are ignored.'),
+        ] = None,
+        created_from: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Inclusive lower bound on registration time. Accepts YYYY-MM-DD, "
+                    '"YYYY-MM-DD HH:MM:SS", or an ISO 8601 datetime; no-timezone values '
+                    "are parsed as UTC."
+                )
+            ),
+        ] = None,
+        created_to: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Inclusive upper bound on registration time, same formats as "
+                    "created_from; a date-only value widens to end of that day."
+                )
+            ),
+        ] = None,
     ) -> str:
-        """List all platform tenants (paginated, filterable). Requires superAdmin/admin role.
+        """List platform tenants (paginated, filterable). Requires superAdmin/admin role.
 
-        All filters combine with AND; results are always sorted by createdAt
-        descending; an invalid date value in created_from/created_to is silently
+        Filters combine with AND; results are always sorted by createdAt
+        descending; an invalid date in created_from/created_to is silently
         ignored rather than erroring.
-
-        Response shape: {"code": 200, "data": {"tenants": [...], "total": int,
-        "page": int, "pageSize": int, "totalPages": int}}. Each tenant object:
-        id (uuid), name, slug, agentDomain, microsoftTenantId,
-        microsoftTenantName, microsoftDomain, registrarEmail (nullable),
-        timezoneId, timezoneName, timezoneOffset, isActive, createdAt,
-        updatedAt, userCount.
-
-        Args:
-            page: Optional page number, starting from 1. Default 1.
-            page_size: Optional results per page, range 1-100 (values above
-                100 are clamped to 100). Default 20.
-            search: Optional case-insensitive substring match against name,
-                slug, or microsoftTenantName — any match is returned.
-            is_active: Optional active-status filter. Only "true" or "false"
-                are honored; any other value is treated as no filter.
-            created_from: Optional inclusive lower bound on registration time.
-                Accepts YYYY-MM-DD, "YYYY-MM-DD HH:MM:SS",
-                YYYY-MM-DDThh:mm:ssZ, or YYYY-MM-DDThh:mm:ss+hh:mm; a value
-                with no timezone suffix is parsed as UTC.
-            created_to: Optional inclusive upper bound on registration time,
-                same accepted formats as created_from; a date-only value is
-                widened to 23:59:59.999 of that day.
         """
         client = client_factory()
         if client is None:
             return NO_TOKEN
+        if page_size is not None:
+            page_size = min(page_size, _MAX_PAGE_SIZE)
         params = {
             "page": page,
             "pageSize": page_size,
@@ -60,6 +74,6 @@ def register(mcp: FastMCP, client_factory: Callable[[], AgentTenantUserClient | 
         }
         try:
             result = await client.get("/tenants", params=params)
-            return json.dumps(result, indent=2, default=str)
+            return dump_json_capped(result)
         except AgentTenantUserError as e:
-            return f"Error: {e}"
+            return e.to_envelope()

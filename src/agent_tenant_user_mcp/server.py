@@ -84,6 +84,21 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     # correctly behind a reverse proxy or docker network.
     mcp = FastMCP(
         name="agent-tenant-user-mcp",
+        instructions=(
+            "This server wraps an internal MSPbots Agent Platform App API (the "
+            "mb-platform-user service) — not a third-party vendor product. It "
+            "exposes platform-level tenant records (organizations onboarded to "
+            "the Agent Platform), not customer support or ticketing data. The "
+            "single tool, mspbots_user_list_tenants, lists all tenants with "
+            "pagination and optional filters (free-text search, active status, "
+            "registration date range); the caller's JWT must carry "
+            "superAdmin/admin role or the upstream API returns a permission "
+            "error. Typical use: audit which tenants exist, find a tenant's "
+            "id/slug for use with other Agent Platform tools, or check "
+            "recently-registered tenants via created_from/created_to. This is "
+            "a read-only service — there is no tool here to create, update, "
+            "or delete tenants."
+        ),
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
