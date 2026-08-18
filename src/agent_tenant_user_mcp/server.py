@@ -89,8 +89,9 @@ def create_mcp_server(settings: Settings) -> FastMCP:
 
     client_factory: Callable[[], AgentTenantUserClient | None] = get_client_from_context
 
-    from .tools import tenants
+    from .tools import tenants, users
 
     tenants.register(mcp, client_factory)
+    users.register(mcp, client_factory)
 
     return mcp

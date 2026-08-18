@@ -20,13 +20,9 @@ def register(mcp: FastMCP, client_factory: Callable[[], AgentTenantUserClient | 
     ) -> str:
         """List all platform tenants (paginated, filterable). Requires superAdmin/admin role.
 
-        API: GET /apps/mb-platform-user/api/tenants
-
-        Per the current INT-branch implementation (service/tenant.ts:87, confirmed
-        by Leo Yang 2026-07-30 — supersedes the original source doc, which only
-        documented page/pageSize): all filters combine with AND; results are
-        always sorted by createdAt descending; an invalid date value in
-        created_from/created_to is silently ignored rather than erroring.
+        All filters combine with AND; results are always sorted by createdAt
+        descending; an invalid date value in created_from/created_to is silently
+        ignored rather than erroring.
 
         Response shape: {"code": 200, "data": {"tenants": [...], "total": int,
         "page": int, "pageSize": int, "totalPages": int}}. Each tenant object:
