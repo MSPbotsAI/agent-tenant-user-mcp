@@ -13,6 +13,7 @@ from agent_tenant_user_mcp.server import create_mcp_server
 
 EXPECTED_TOOLS = {
     "mspbots_user_list_tenants": set(),
+    "mspbots_user_list_users": set(),
 }
 
 

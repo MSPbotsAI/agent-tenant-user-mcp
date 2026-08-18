@@ -87,17 +87,17 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         instructions=(
             "This server wraps an internal MSPbots Agent Platform App API (the "
             "mb-platform-user service) — not a third-party vendor product. It "
-            "exposes platform-level tenant records (organizations onboarded to "
-            "the Agent Platform), not customer support or ticketing data. The "
-            "single tool, mspbots_user_list_tenants, lists all tenants with "
-            "pagination and optional filters (free-text search, active status, "
-            "registration date range); the caller's JWT must carry "
-            "superAdmin/admin role or the upstream API returns a permission "
-            "error. Typical use: audit which tenants exist, find a tenant's "
-            "id/slug for use with other Agent Platform tools, or check "
-            "recently-registered tenants via created_from/created_to. This is "
-            "a read-only service — there is no tool here to create, update, "
-            "or delete tenants."
+            "exposes platform-level tenant and user records, not customer "
+            "support or ticketing data. mspbots_user_list_tenants lists "
+            "onboarded tenant organizations with pagination and optional "
+            "filters (free-text search, active status, registration date "
+            "range); the caller's JWT must carry superAdmin/admin role or the "
+            "upstream API returns a permission error. mspbots_user_list_users "
+            "lists platform users — the set of assignable owners (id/email/"
+            "displayName/userName). Typical use: audit which tenants exist, "
+            "find a tenant's id/slug, or look up a user to assign as an "
+            "owner. This is a read-only service — no tool creates, updates, "
+            "or deletes tenants or users."
         ),
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
