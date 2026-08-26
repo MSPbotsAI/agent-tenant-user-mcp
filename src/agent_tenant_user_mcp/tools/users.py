@@ -24,8 +24,10 @@ def register(mcp: FastMCP, client_factory: Callable[[], AgentTenantUserClient | 
             Field(description="Results per page (default 100; values above 100 are clamped)."),
         ] = None,
     ) -> str:
-        """List platform users (paginated). Returns the set of assignable owners
-        (id, email, displayName, userName per user).
+        """List users within the caller's own tenant (paginated) — scoped to
+        the tenant identified by the credential, not the whole platform.
+        Returns the set of assignable owners (id, email, displayName,
+        userName per user).
         """
         client = client_factory()
         if client is None:
