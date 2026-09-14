@@ -56,7 +56,7 @@ CMD ["python", "-m", "agent_tenant_user_mcp"]
 
 # OCI image labels
 LABEL org.opencontainers.image.title="agent-tenant-user-mcp"
-LABEL org.opencontainers.image.description="MCP server for the MSPbots Agent Platform tenant/user API (mb-platform-user)"
+LABEL org.opencontainers.image.description="MCP server for the MSPbots Agent Platform directory API (tenants and users)"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.created="${BUILD_DATE}"
 LABEL org.opencontainers.image.revision="${COMMIT_SHA}"

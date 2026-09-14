@@ -1,7 +1,7 @@
 [project]
 name = "agent-tenant-user-mcp"
 version = "0.1.0"
-description = "MCP server for the MSPbots Agent Platform tenant/user API (mb-platform-user)"
+description = "MCP server for the MSPbots Agent Platform directory API (tenants and users)"
 requires-python = ">=3.12"
 dependencies = [
     "mcp[cli]>=1.9.0,<2.0.0",

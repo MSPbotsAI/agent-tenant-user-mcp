@@ -53,11 +53,12 @@ def register(mcp: FastMCP, client_factory: Callable[[], AgentTenantUserClient | 
             ),
         ] = None,
     ) -> str:
-        """List platform tenants (paginated, filterable). Requires superAdmin/admin role.
+        """List platform tenants (paginated, filterable). Needs a platform-level credential.
 
         Filters combine with AND; results are always sorted by createdAt
         descending; an invalid date in created_from/created_to is silently
-        ignored rather than erroring.
+        ignored rather than erroring. A credential that is not platform-level
+        sees only its own tenant, or gets a permission error.
         """
         client = client_factory()
         if client is None:

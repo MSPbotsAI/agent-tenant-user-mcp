@@ -13,8 +13,8 @@ from .config import Settings
 # Per-request credential isolation via contextvars.
 # GatewayTokenMiddleware sets this before the MCP handler runs.
 # Python asyncio copies context per task, so concurrent SSE connections are isolated.
-_gateway_creds_var: contextvars.ContextVar[tuple[str, str, str] | None] = contextvars.ContextVar(
-    "agent_tenant_user_gateway_creds", default=None
+_gateway_creds_var: contextvars.ContextVar[tuple[str, str, str | None] | None] = (
+    contextvars.ContextVar("agent_tenant_user_gateway_creds", default=None)
 )
 
 
@@ -30,9 +30,13 @@ def get_client_from_context() -> AgentTenantUserClient | None:
 class GatewayTokenMiddleware:
     """ASGI middleware.
 
-    Reads X-MSP-Token, X-MSP-Tenant-Id, and X-MSP-Host (all required) from
-    request headers and stores them in the contextvar. Returns 401 if any is
-    missing on /mcp requests.
+    Reads X-MSP-Token and X-MSP-Host (both required) plus the optional
+    X-MSP-Tenant-Id from request headers and stores them in the contextvar.
+    Returns 401 on /mcp requests if either required header is missing.
+
+    X-MSP-Tenant-Id is optional because the credential in X-MSP-Token is
+    already tenant-scoped; when supplied it only sets the default tenant a
+    platform-tenant credential reads users from.
     """
 
     def __init__(self, app: ASGIApp, settings: Settings):
@@ -53,17 +57,18 @@ class GatewayTokenMiddleware:
         token = request.headers.get("x-msp-token")
         tenant_id = request.headers.get("x-msp-tenant-id")
         host = request.headers.get("x-msp-host")
-        if not token or not tenant_id or not host:
+        if not token or not host:
             response = JSONResponse(
                 {
                     "error": "Missing credentials",
                     "message": (
                         "This server requires the X-MSP-Token header (Agent Platform "
-                        "bearer access credential), the X-MSP-Tenant-Id header, and "
-                        "the X-MSP-Host header (Agent Platform host)"
+                        "API key, or a user JWT) and the X-MSP-Host header (Agent "
+                        "Platform host). X-MSP-Tenant-Id is optional and only sets "
+                        "the default tenant for user lookups."
                     ),
-                    "required_headers": ["X-MSP-Token", "X-MSP-Tenant-Id", "X-MSP-Host"],
-                    "optional_headers": [],
+                    "required_headers": ["X-MSP-Token", "X-MSP-Host"],
+                    "optional_headers": ["X-MSP-Tenant-Id"],
                 },
                 status_code=401,
             )
@@ -85,19 +90,22 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     mcp = FastMCP(
         name="agent-tenant-user-mcp",
         instructions=(
-            "This server wraps an internal MSPbots Agent Platform App API (the "
-            "mb-platform-user service) — not a third-party vendor product. It "
-            "exposes platform-level tenant and user records, not customer "
-            "support or ticketing data. mspbots_user_list_tenants lists "
-            "onboarded tenant organizations with pagination and optional "
-            "filters (free-text search, active status, registration date "
-            "range); the caller's JWT must carry superAdmin/admin role or the "
-            "upstream API returns a permission error. mspbots_user_list_users "
-            "lists platform users — the set of assignable owners (id/email/"
-            "displayName/userName). Typical use: audit which tenants exist, "
-            "find a tenant's id/slug, or look up a user to assign as an "
-            "owner. This is a read-only service — no tool creates, updates, "
-            "or deletes tenants or users."
+            "This server wraps an internal MSPbots Agent Platform directory "
+            "API — not a third-party vendor product. It exposes "
+            "platform-level tenant and user records, not customer support or "
+            "ticketing data. mspbots_user_list_tenants lists onboarded tenant "
+            "organizations with pagination and optional filters (free-text "
+            "search, active status, registration date range). "
+            "mspbots_user_list_users lists users of one tenant — the set of "
+            "assignable owners — with search, department, active-status and "
+            "sort options. Both need a platform-level credential to see "
+            "beyond a single tenant; otherwise the results narrow to the "
+            "credential's own tenant, or a permission error comes back. "
+            "Tenant and user ids are the platform's directory ids, the same "
+            "ones other platform services use. Typical use: audit which "
+            "tenants exist, find a tenant's id/slug, or look up a user to "
+            "assign as an owner. This is a read-only service — no tool "
+            "creates, updates, or deletes tenants or users."
         ),
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         stateless_http=True,

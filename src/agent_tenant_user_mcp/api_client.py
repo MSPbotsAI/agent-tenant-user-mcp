@@ -5,10 +5,21 @@ import httpx
 
 from ._json import error_envelope
 
-# The App API is only reachable at this path prefix (see tenants.md): "https://
-# <host>/apps/mb-platform-user/api/<endpoint>". Do not hardcode this prefix
-# elsewhere — X-MSP-Host only carries the bare host.
-_API_PREFIX = "/apps/mb-platform-user/api"
+# The directory API is only reachable at this path prefix: "https://<host>
+# /apps/mb-platform-setting/api/directory/mcp/<endpoint>". Do not hardcode
+# this prefix elsewhere — X-MSP-Host only carries the bare host.
+#
+# mb-platform-user was retired; mb-platform-setting exposes this dedicated
+# MCP-only paging surface. The full directory endpoints it also serves
+# (/api/directory/tenants, /api/directory/users) are for pages and other
+# apps — MCP must stay on /api/directory/mcp/*.
+_API_PREFIX = "/apps/mb-platform-setting/api/directory/mcp"
+
+# Tenant API keys minted on setting's API Keys page carry this prefix. The
+# downstream accepts either an API key (X-API-Key) or a user JWT
+# (Authorization: Bearer); the prefix is what tells the two apart, so an
+# operator can still point a credential at a debug JWT without a code change.
+_API_KEY_PREFIX = "mbk_"
 
 _TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -63,31 +74,32 @@ class AgentTenantUserError(Exception):
 
 
 class AgentTenantUserClient:
-    """Async httpx client wrapping the MSPbots Agent Platform tenant/user API.
+    """Async httpx client wrapping the MSPbots Agent Platform directory API.
 
     Reuses the module-level connection pool (see _get_http_client) across
     every call made through this instance, rather than opening a new
     connection per request.
 
-    Per the established pattern for this platform (confirmed in ticketqa-mcp),
-    the routing layer resolves which tenant a request belongs to via an
-    `X_Tenant_ID` header — the source doc (tenants.md) describes this as a
-    Cookie requirement, but the working convention across this platform's
-    other MCP servers is to forward it as an HTTP header instead, which the
-    gateway/routing layer accepts equivalently.
+    The credential is tenant-scoped on its own: an API key belongs to the
+    tenant that minted it, and a JWT carries its tenant in the token. So
+    there is no per-request tenant header any more — `default_tenant_id`
+    only supplies the *default* `tenantId` query value for the endpoints
+    that accept one, and the downstream ignores it unless the caller is a
+    platform tenant.
     """
 
-    def __init__(self, access_token: str, host: str, tenant_id: str):
+    def __init__(self, access_token: str, host: str, tenant_id: str | None = None):
         self._token = access_token
-        self._tenant_id = tenant_id
+        self.default_tenant_id = tenant_id
         self._base_url = host.rstrip("/") + _API_PREFIX
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._token}",
-            "X_Tenant_ID": self._tenant_id,
-            "Accept": "application/json",
-        }
+        headers = {"Accept": "application/json"}
+        if self._token.startswith(_API_KEY_PREFIX):
+            headers["X-API-Key"] = self._token
+        else:
+            headers["Authorization"] = f"Bearer {self._token}"
+        return headers
 
     def _clean_params(self, params: dict | None) -> dict:
         if not params:

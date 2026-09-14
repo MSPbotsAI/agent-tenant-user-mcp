@@ -6,6 +6,7 @@ leakage across requests).
 from starlette.testclient import TestClient
 
 from agent_tenant_user_mcp.__main__ import _build_http_app
+from agent_tenant_user_mcp.api_client import AgentTenantUserClient
 from agent_tenant_user_mcp.config import Settings
 from agent_tenant_user_mcp.server import create_mcp_server, get_client_from_context
 
@@ -34,7 +35,8 @@ def test_missing_header_returns_401_with_required_headers_listed():
         )
         assert resp.status_code == 401
         body = resp.json()
-        assert body["required_headers"] == ["X-MSP-Token", "X-MSP-Tenant-Id", "X-MSP-Host"]
+        assert body["required_headers"] == ["X-MSP-Token", "X-MSP-Host"]
+        assert body["optional_headers"] == ["X-MSP-Tenant-Id"]
 
 
 def test_missing_single_header_still_returns_401():
@@ -51,6 +53,23 @@ def test_missing_single_header_still_returns_401():
             },
         )
         assert resp.status_code == 401
+
+
+def test_absent_tenant_id_header_is_accepted():
+    # X-MSP-Tenant-Id is optional: the credential is already tenant-scoped,
+    # so a request without it must reach the MCP handler, not get a 401.
+    app, _ = _make_app()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "X-MSP-Token": "dummy-token",
+                "X-MSP-Host": "https://agent.mspbots.ai",
+            },
+        )
+        assert resp.status_code == 200
 
 
 def test_header_present_reaches_request_context(monkeypatch):
@@ -95,6 +114,8 @@ def test_header_present_reaches_request_context(monkeypatch):
 
     asyncio.run(run())
     assert seen["creds"] == ("test-token-123", "https://agent.mspbots.ai", "tenant-abc")
+    # The tenant id only becomes a default query value, never a header.
+    assert AgentTenantUserClient(*seen["creds"]).default_tenant_id == "tenant-abc"
     # After the request completes, the contextvar must be reset — a fresh
     # get() outside any request context sees no leftover credential.
     assert _gateway_creds_var.get() is None

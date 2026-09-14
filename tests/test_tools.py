@@ -65,3 +65,106 @@ def test_error_envelope_mapping(status_code, expected_code, expected_retryable):
     assert envelope["error"]["code"] == expected_code
     assert envelope["error"]["retryable"] is expected_retryable
     assert envelope["error"]["message"] == "boom"
+
+
+class _StubClient:
+    """Records the downstream call a tool would have made."""
+
+    def __init__(self, default_tenant_id=None):
+        self.default_tenant_id = default_tenant_id
+        self.calls = []
+
+    async def get(self, path, params=None):
+        self.calls.append((path, params))
+        return {"code": 200, "data": {"users": [], "total": 0}}
+
+
+def _users_server(stub):
+    from mcp.server.fastmcp import FastMCP
+
+    from agent_tenant_user_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    users.register(mcp, lambda: stub)
+    return mcp
+
+
+@pytest.mark.asyncio
+async def test_list_users_exposes_the_documented_filters():
+    mcp = create_mcp_server(Settings())
+    tool = {t.name: t for t in await mcp.list_tools()}["mspbots_user_list_users"]
+    assert set(tool.inputSchema["properties"]) == {
+        "page",
+        "page_size",
+        "tenant_id",
+        "search",
+        "department",
+        "is_active",
+        "sort_by",
+        "sort_order",
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_users_maps_arguments_to_downstream_query_params():
+    stub = _StubClient()
+    mcp = _users_server(stub)
+    await mcp.call_tool(
+        "mspbots_user_list_users",
+        {
+            "page": 2,
+            "page_size": 50,
+            "tenant_id": "org_abc",
+            "search": "jason",
+            "department": "R&D",
+            "is_active": "true",
+            "sort_by": "lastLoginAt",
+            "sort_order": "asc",
+        },
+    )
+    path, params = stub.calls[0]
+    assert path == "/users/page"
+    assert params == {
+        "page": 2,
+        "pageSize": 50,
+        "tenantId": "org_abc",
+        "search": "jason",
+        "department": "R&D",
+        "isActive": "true",
+        "sortBy": "lastLoginAt",
+        "sortOrder": "asc",
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_users_page_size_is_clamped_to_the_upstream_cap():
+    stub = _StubClient()
+    mcp = _users_server(stub)
+    await mcp.call_tool("mspbots_user_list_users", {"page_size": 5000})
+    assert stub.calls[0][1]["pageSize"] == 100
+
+
+@pytest.mark.asyncio
+async def test_list_users_falls_back_to_the_credential_tenant():
+    stub = _StubClient(default_tenant_id="org_from_header")
+    mcp = _users_server(stub)
+    await mcp.call_tool("mspbots_user_list_users", {})
+    assert stub.calls[0][1]["tenantId"] == "org_from_header"
+
+
+@pytest.mark.asyncio
+async def test_explicit_tenant_id_wins_over_the_credential_tenant():
+    stub = _StubClient(default_tenant_id="org_from_header")
+    mcp = _users_server(stub)
+    await mcp.call_tool("mspbots_user_list_users", {"tenant_id": "org_explicit"})
+    assert stub.calls[0][1]["tenantId"] == "org_explicit"
+
+
+@pytest.mark.asyncio
+async def test_no_tenant_anywhere_leaves_the_param_off():
+    stub = _StubClient()
+    mcp = _users_server(stub)
+    await mcp.call_tool("mspbots_user_list_users", {})
+    # None is dropped by the real client's _clean_params, so the downstream
+    # falls back to the tenant the credential itself belongs to.
+    assert stub.calls[0][1]["tenantId"] is None
