@@ -70,8 +70,7 @@ def test_error_envelope_mapping(status_code, expected_code, expected_retryable):
 class _StubClient:
     """Records the downstream call a tool would have made."""
 
-    def __init__(self, default_tenant_id=None):
-        self.default_tenant_id = default_tenant_id
+    def __init__(self):
         self.calls = []
 
     async def get(self, path, params=None):
@@ -145,26 +144,15 @@ async def test_list_users_page_size_is_clamped_to_the_upstream_cap():
 
 
 @pytest.mark.asyncio
-async def test_list_users_falls_back_to_the_credential_tenant():
-    stub = _StubClient(default_tenant_id="org_from_header")
-    mcp = _users_server(stub)
-    await mcp.call_tool("mspbots_user_list_users", {})
-    assert stub.calls[0][1]["tenantId"] == "org_from_header"
-
-
-@pytest.mark.asyncio
-async def test_explicit_tenant_id_wins_over_the_credential_tenant():
-    stub = _StubClient(default_tenant_id="org_from_header")
+async def test_tenant_id_comes_only_from_the_tool_argument():
+    # There is no tenant header any more, so the argument is the single
+    # source: pass it and it travels, omit it and the param is dropped by
+    # the real client's _clean_params, leaving the downstream to fall back
+    # to the tenant the credential itself belongs to.
+    stub = _StubClient()
     mcp = _users_server(stub)
     await mcp.call_tool("mspbots_user_list_users", {"tenant_id": "org_explicit"})
     assert stub.calls[0][1]["tenantId"] == "org_explicit"
 
-
-@pytest.mark.asyncio
-async def test_no_tenant_anywhere_leaves_the_param_off():
-    stub = _StubClient()
-    mcp = _users_server(stub)
     await mcp.call_tool("mspbots_user_list_users", {})
-    # None is dropped by the real client's _clean_params, so the downstream
-    # falls back to the tenant the credential itself belongs to.
-    assert stub.calls[0][1]["tenantId"] is None
+    assert stub.calls[1][1]["tenantId"] is None

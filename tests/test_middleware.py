@@ -6,7 +6,6 @@ leakage across requests).
 from starlette.testclient import TestClient
 
 from agent_tenant_user_mcp.__main__ import _build_http_app
-from agent_tenant_user_mcp.api_client import AgentTenantUserClient
 from agent_tenant_user_mcp.config import Settings
 from agent_tenant_user_mcp.server import create_mcp_server, get_client_from_context
 
@@ -35,8 +34,7 @@ def test_missing_header_returns_401_with_required_headers_listed():
         )
         assert resp.status_code == 401
         body = resp.json()
-        assert body["required_headers"] == ["X-MSP-Token", "X-MSP-Host"]
-        assert body["optional_headers"] == ["X-MSP-Tenant-Id"]
+        assert body["required_headers"] == ["X-API-Key", "X-MSP-Host"]
 
 
 def test_missing_single_header_still_returns_401():
@@ -47,17 +45,16 @@ def test_missing_single_header_still_returns_401():
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
             headers={
                 "Accept": "application/json, text/event-stream",
-                "X-MSP-Token": "dummy-token",
-                "X-MSP-Tenant-Id": "dummy-tenant",
+                "X-API-Key": "dummy-token",
                 # X-MSP-Host intentionally omitted
             },
         )
         assert resp.status_code == 401
 
 
-def test_absent_tenant_id_header_is_accepted():
-    # X-MSP-Tenant-Id is optional: the credential is already tenant-scoped,
-    # so a request without it must reach the MCP handler, not get a 401.
+def test_the_two_required_headers_are_enough():
+    # There is no tenant header any more: the credential is already
+    # tenant-scoped, so X-API-Key + X-MSP-Host must reach the MCP handler.
     app, _ = _make_app()
     with TestClient(app) as client:
         resp = client.post(
@@ -65,11 +62,69 @@ def test_absent_tenant_id_header_is_accepted():
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
             headers={
                 "Accept": "application/json, text/event-stream",
-                "X-MSP-Token": "dummy-token",
+                "X-API-Key": "dummy-token",
                 "X-MSP-Host": "https://agent.mspbots.ai",
             },
         )
         assert resp.status_code == 200
+
+
+def test_legacy_token_header_is_still_accepted():
+    # NOTE(transition, 2026-09-21): credential rows written before the
+    # X-MSP-Token -> X-API-Key rename still inject the old name. Delete this
+    # test together with the fallback in GatewayTokenMiddleware once every
+    # tenant credential has been re-saved.
+    app, _ = _make_app()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "X-MSP-Token": "legacy-token",
+                "X-MSP-Host": "https://agent.mspbots.ai",
+            },
+        )
+        assert resp.status_code == 200
+
+
+def test_x_api_key_wins_when_both_names_are_present():
+    # A tenant mid-migration can briefly have both stored; the new name is
+    # the one that counts, so re-saving a credential takes effect immediately.
+    import asyncio
+
+    from agent_tenant_user_mcp.server import GatewayTokenMiddleware, _gateway_creds_var
+
+    seen = {}
+
+    async def fake_app(scope, receive, send):
+        seen["creds"] = _gateway_creds_var.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = GatewayTokenMiddleware(fake_app, Settings())
+
+    async def run():
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [
+                (b"x-api-key", b"new-key"),
+                (b"x-msp-token", b"legacy-key"),
+                (b"x-msp-host", b"https://agent.mspbots.ai"),
+            ],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            pass
+
+        await middleware(scope, receive, send)
+
+    asyncio.run(run())
+    assert seen["creds"] == ("new-key", "https://agent.mspbots.ai")
 
 
 def test_header_present_reaches_request_context(monkeypatch):
@@ -96,8 +151,7 @@ def test_header_present_reaches_request_context(monkeypatch):
             "type": "http",
             "path": "/mcp",
             "headers": [
-                (b"x-msp-token", b"test-token-123"),
-                (b"x-msp-tenant-id", b"tenant-abc"),
+                (b"x-api-key", b"test-token-123"),
                 (b"x-msp-host", b"https://agent.mspbots.ai"),
             ],
         }
@@ -113,9 +167,7 @@ def test_header_present_reaches_request_context(monkeypatch):
         await middleware(scope, receive, send)
 
     asyncio.run(run())
-    assert seen["creds"] == ("test-token-123", "https://agent.mspbots.ai", "tenant-abc")
-    # The tenant id only becomes a default query value, never a header.
-    assert AgentTenantUserClient(*seen["creds"]).default_tenant_id == "tenant-abc"
+    assert seen["creds"] == ("test-token-123", "https://agent.mspbots.ai")
     # After the request completes, the contextvar must be reset — a fresh
     # get() outside any request context sees no leftover credential.
     assert _gateway_creds_var.get() is None

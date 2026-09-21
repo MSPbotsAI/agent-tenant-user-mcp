@@ -28,8 +28,8 @@ def register(mcp: FastMCP, client_factory: Callable[[], AgentTenantUserClient | 
             Field(
                 description=(
                     "Tenant to list users of. Only honoured for a platform-level "
-                    "credential; anyone else always gets their own tenant. Defaults "
-                    "to the tenant the credential belongs to."
+                    "credential; anyone else always gets their own tenant. Omit it "
+                    "to read the tenant the credential itself belongs to."
                 )
             ),
         ] = None,
@@ -79,7 +79,7 @@ def register(mcp: FastMCP, client_factory: Callable[[], AgentTenantUserClient | 
         params = {
             "page": page,
             "pageSize": page_size,
-            "tenantId": tenant_id or client.default_tenant_id,
+            "tenantId": tenant_id,
             "search": search,
             "department": department,
             "isActive": is_active,

@@ -13,7 +13,7 @@ from .config import Settings
 # Per-request credential isolation via contextvars.
 # GatewayTokenMiddleware sets this before the MCP handler runs.
 # Python asyncio copies context per task, so concurrent SSE connections are isolated.
-_gateway_creds_var: contextvars.ContextVar[tuple[str, str, str | None] | None] = (
+_gateway_creds_var: contextvars.ContextVar[tuple[str, str] | None] = (
     contextvars.ContextVar("agent_tenant_user_gateway_creds", default=None)
 )
 
@@ -23,20 +23,22 @@ def get_client_from_context() -> AgentTenantUserClient | None:
     creds = _gateway_creds_var.get()
     if not creds:
         return None
-    token, host, tenant_id = creds
-    return AgentTenantUserClient(token, host, tenant_id)
+    token, host = creds
+    return AgentTenantUserClient(token, host)
 
 
 class GatewayTokenMiddleware:
     """ASGI middleware.
 
-    Reads X-MSP-Token and X-MSP-Host (both required) plus the optional
-    X-MSP-Tenant-Id from request headers and stores them in the contextvar.
-    Returns 401 on /mcp requests if either required header is missing.
+    Reads X-API-Key and X-MSP-Host (both required) from request headers and
+    stores them in the contextvar. Returns 401 on /mcp requests if either is
+    missing.
 
-    X-MSP-Tenant-Id is optional because the credential in X-MSP-Token is
-    already tenant-scoped; when supplied it only sets the default tenant a
-    platform-tenant credential reads users from.
+    There is no tenant header: the credential in X-API-Key is already
+    tenant-scoped (an API key belongs to the tenant that minted it, a JWT
+    carries its tenant). A caller that needs to read another tenant passes
+    mspbots_user_list_users' tenant_id argument, which only a platform-level
+    credential is allowed to use.
     """
 
     def __init__(self, app: ASGIApp, settings: Settings):
@@ -54,28 +56,33 @@ class GatewayTokenMiddleware:
             return
 
         request = Request(scope)
-        token = request.headers.get("x-msp-token")
-        tenant_id = request.headers.get("x-msp-tenant-id")
+        token = request.headers.get("x-api-key")
+        if not token:
+            # NOTE(transition, 2026-09-21): X-API-Key replaced X-MSP-Token as the
+            # credential header name. Credential rows written before the rename
+            # still hold the old key and the gateway injects whatever is stored,
+            # so keep honouring it until every tenant's credential has been
+            # re-saved under X-API-Key. Remove this fallback — and
+            # test_legacy_token_header_is_still_accepted — once that is done.
+            token = request.headers.get("x-msp-token")
         host = request.headers.get("x-msp-host")
         if not token or not host:
             response = JSONResponse(
                 {
                     "error": "Missing credentials",
                     "message": (
-                        "This server requires the X-MSP-Token header (Agent Platform "
+                        "This server requires the X-API-Key header (Agent Platform "
                         "API key, or a user JWT) and the X-MSP-Host header (Agent "
-                        "Platform host). X-MSP-Tenant-Id is optional and only sets "
-                        "the default tenant for user lookups."
+                        "Platform host)."
                     ),
-                    "required_headers": ["X-MSP-Token", "X-MSP-Host"],
-                    "optional_headers": ["X-MSP-Tenant-Id"],
+                    "required_headers": ["X-API-Key", "X-MSP-Host"],
                 },
                 status_code=401,
             )
             await response(scope, receive, send)
             return
 
-        ctx_token = _gateway_creds_var.set((token, host, tenant_id))
+        ctx_token = _gateway_creds_var.set((token, host))
         try:
             await self.app(scope, receive, send)
         finally:

@@ -19,6 +19,8 @@ _API_PREFIX = "/apps/mb-platform-setting/api/directory/mcp"
 # downstream accepts either an API key (X-API-Key) or a user JWT
 # (Authorization: Bearer); the prefix is what tells the two apart, so an
 # operator can still point a credential at a debug JWT without a code change.
+# Note the inbound header is also called X-API-Key, but that is only a name
+# collision: an inbound JWT still leaves as Authorization: Bearer.
 _API_KEY_PREFIX = "mbk_"
 
 _TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
@@ -27,10 +29,10 @@ _MAX_RETRIES = 3
 _MAX_BACKOFF_SECONDS = 20.0
 
 # One shared connection pool for the process lifetime. No credentials are
-# ever stored on it — the bearer token/tenant id are passed per-request via
-# headers, so this is safe to share across tenants/requests (see server.py's
-# contextvar-based credential isolation, which is what actually keeps
-# tenants apart).
+# ever stored on it — the credential is passed per-request via headers built
+# fresh for that request, so this is safe to share across tenants/requests
+# (see server.py's contextvar-based credential isolation, which is what
+# actually keeps tenants apart).
 _http_client: httpx.AsyncClient | None = None
 
 
@@ -80,17 +82,15 @@ class AgentTenantUserClient:
     every call made through this instance, rather than opening a new
     connection per request.
 
-    The credential is tenant-scoped on its own: an API key belongs to the
-    tenant that minted it, and a JWT carries its tenant in the token. So
-    there is no per-request tenant header any more — `default_tenant_id`
-    only supplies the *default* `tenantId` query value for the endpoints
-    that accept one, and the downstream ignores it unless the caller is a
-    platform tenant.
+    Tenancy is carried by the credential itself: an API key belongs to the
+    tenant that minted it, and a JWT carries its tenant in the token. The
+    client therefore holds no tenant of its own — a caller that wants to
+    read a different tenant passes `tenantId` as a query param, which the
+    downstream honours only for a platform-level credential.
     """
 
-    def __init__(self, access_token: str, host: str, tenant_id: str | None = None):
+    def __init__(self, access_token: str, host: str):
         self._token = access_token
-        self.default_tenant_id = tenant_id
         self._base_url = host.rstrip("/") + _API_PREFIX
 
     def _headers(self) -> dict[str, str]:
