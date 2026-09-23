@@ -25,10 +25,17 @@ def test_api_key_credential_goes_in_x_api_key():
     assert "Authorization" not in headers
 
 
-def test_jwt_credential_still_goes_in_authorization_bearer():
+def test_credential_is_passed_through_whatever_it_looks_like():
+    """No sniffing: the credential goes out as X-API-Key regardless of shape.
+
+    Pinned because the old code branched on a "mbk_" prefix and sent anything
+    else as Authorization: Bearer. Reintroducing that would be invisible here
+    unless a non-prefixed value is asserted too — and in production it would
+    surface only as a 401 that looks exactly like an expired key.
+    """
     headers = AgentTenantUserClient("eyJhbGciOiJFZERTQSJ9.aaa.bbb", "https://h")._headers()
-    assert headers["Authorization"] == "Bearer eyJhbGciOiJFZERTQSJ9.aaa.bbb"
-    assert "X-API-Key" not in headers
+    assert headers["X-API-Key"] == "eyJhbGciOiJFZERTQSJ9.aaa.bbb"
+    assert "Authorization" not in headers
 
 
 def test_tenant_id_is_never_sent_as_a_header():

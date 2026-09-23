@@ -15,14 +15,6 @@ from ._json import error_envelope
 # apps — MCP must stay on /api/directory/mcp/*.
 _API_PREFIX = "/apps/mb-platform-setting/api/directory/mcp"
 
-# Tenant API keys minted on setting's API Keys page carry this prefix. The
-# downstream accepts either an API key (X-API-Key) or a user JWT
-# (Authorization: Bearer); the prefix is what tells the two apart, so an
-# operator can still point a credential at a debug JWT without a code change.
-# Note the inbound header is also called X-API-Key, but that is only a name
-# collision: an inbound JWT still leaves as Authorization: Bearer.
-_API_KEY_PREFIX = "mbk_"
-
 _TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _MAX_RETRIES = 3
@@ -83,10 +75,10 @@ class AgentTenantUserClient:
     connection per request.
 
     Tenancy is carried by the credential itself: an API key belongs to the
-    tenant that minted it, and a JWT carries its tenant in the token. The
-    client therefore holds no tenant of its own — a caller that wants to
-    read a different tenant passes `tenantId` as a query param, which the
-    downstream honours only for a platform-level credential.
+    tenant that minted it. The client therefore holds no tenant of its own —
+    a caller that wants to read a different tenant passes `tenantId` as a
+    query param, which the downstream honours only for a platform-level
+    credential.
     """
 
     def __init__(self, access_token: str, host: str):
@@ -94,12 +86,15 @@ class AgentTenantUserClient:
         self._base_url = host.rstrip("/") + _API_PREFIX
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "application/json"}
-        if self._token.startswith(_API_KEY_PREFIX):
-            headers["X-API-Key"] = self._token
-        else:
-            headers["Authorization"] = f"Bearer {self._token}"
-        return headers
+        # Passed through verbatim under the platform's own header name.
+        # This used to branch on the token's prefix, sending a JWT as
+        # `Authorization: Bearer` instead. PRD-19165 retired the JWT, so the
+        # branch had nothing left to select — and sniffing the credential to
+        # decide how to send it is a bad failure mode: a key that ever stops
+        # matching the prefix would silently fall back to a header the
+        # downstream does not read, and the resulting 401 is indistinguishable
+        # from an expired credential.
+        return {"Accept": "application/json", "X-API-Key": self._token}
 
     def _clean_params(self, params: dict | None) -> dict:
         if not params:
